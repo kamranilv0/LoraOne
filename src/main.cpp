@@ -23,7 +23,10 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
-#include "driver/uart.h"
+// [REMOVE] #include "driver/uart.h"
+#include "driver/usb_serial_jtag.h"
+#include "esp_vfs_usb_serial_jtag.h" // Required to hook printf/ESP_LOG to USB
+#include "esp_vfs_dev.h" // Include this for esp_vfs_usb_serial_jtag_use_driver
 #include "hal/gpio_hal.h"
 
 #include "esp_log.h"
@@ -76,7 +79,10 @@ static void radio_start_rx();
 static void radio_transmit(const uint8_t *data, size_t length);
 static void gpio_setup();
 static void spi_setup();
-static void uart_init();
+// [UPDATE] inside app_main
+
+// uart_init();  <-- Remove this
+static void usb_cdc_init(); // <-- Add this
 static void IRAM_ATTR setFlag_RxDone();
 static void IRAM_ATTR setFlag_TxDone();
 static void serial_rx_task(void *pvParameters);
@@ -228,24 +234,30 @@ static void spi_setup()
 // UART SETUP
 // ============================================================================
 
-static void uart_init()
+// [REPLACE] the entire uart_init() function with this:
+
+static void usb_cdc_init()
 {
-    uart_config_t uart_config = {
-        .baud_rate = UART_BAUDRATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
+    ESP_LOGI(TAG, "Initializing USB Serial/JTAG...");
+
+    // Configure the driver buffer sizes
+    usb_serial_jtag_driver_config_t usb_serial_jtag_config = {
+        .tx_buffer_size = 1024,
+        .rx_buffer_size = 1024,
     };
 
-    const uart_port_t uart_port = UART_NUM_0;
-    
-    uart_driver_install(uart_port, SERIAL_RX_BUFFER_SIZE * 2, 0, 0, NULL, 0);
-    uart_param_config(uart_port, &uart_config);
-    uart_set_pin(uart_port, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    // Install the driver
+    esp_err_t ret = usb_serial_jtag_driver_install(&usb_serial_jtag_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to install USB Serial/JTAG driver");
+        return;
+    }
 
-    ESP_LOGI(TAG, "UART initialized (115200 baud)");
+    // Connect the Virtual File System (VFS) to this driver
+    // This makes printf() and ESP_LOGx() work over the USB cable automatically
+    esp_vfs_usb_serial_jtag_use_driver();
+
+    ESP_LOGI(TAG, "USB CDC initialized");
 }
 
 // ============================================================================
@@ -483,20 +495,26 @@ static void radio_transmit(const uint8_t *data, size_t length)
 // SERIAL RX TASK
 // ============================================================================
 
+// [UPDATE] serial_rx_task
+
 static void serial_rx_task(void *pvParameters)
 {
     uint8_t rx_buffer[SERIAL_RX_BUFFER_SIZE];
-    const uart_port_t uart_port = UART_NUM_0;
     
     while (1) {
-        // Read from UART
-        int length = uart_read_bytes(uart_port, rx_buffer, SERIAL_RX_BUFFER_SIZE, 
-                                     pdMS_TO_TICKS(SERIAL_RX_TIMEOUT_MS));
+        // [CHANGE] Use usb_serial_jtag_read_bytes
+        // It returns the number of bytes read
+        int length = usb_serial_jtag_read_bytes(rx_buffer, SERIAL_RX_BUFFER_SIZE, pdMS_TO_TICKS(10));
         
         if (length > 0) {
-            // Data received from Serial - transmit via LoRa
-            ESP_LOGI(TAG, "Serial RX: %d bytes", length);
+            // Data received from USB - transmit via LoRa
+            ESP_LOGI(TAG, "USB RX: %d bytes", length);
             radio_transmit(rx_buffer, length);
+        }
+        
+        // Optional: Small yield to prevent watchdog if timeout is 0 (not needed if timeout > 0)
+        if (length == 0) {
+            vTaskDelay(pdMS_TO_TICKS(10)); 
         }
     }
 }
@@ -507,7 +525,6 @@ static void serial_rx_task(void *pvParameters)
 
 static void radio_rx_task(void *pvParameters)
 {
-    const uart_port_t uart_port = UART_NUM_0;
     
     while (1) {
         // Wait for DIO1 interrupt indicating RX data available
@@ -526,13 +543,22 @@ static void radio_rx_task(void *pvParameters)
                     float rssi = g_radio->getRSSI();
                     float snr = g_radio->getSNR();
                     
+                    // [UPDATE] Inside radio_rx_task loop
+
+                    // ... inside if (state >= 0) block ...
+
                     ESP_LOGI(TAG, "LoRa RX: %zu bytes | RSSI: %.1f dBm | SNR: %.1f dB", 
-                             g_rx_length, rssi, snr);
+                                g_rx_length, rssi, snr);
                     log_hex_dump(g_rx_buffer, g_rx_length, "RX Data");
-                    
-                    // Echo to UART
-                    uart_write_bytes(uart_port, (const char *)g_rx_buffer, g_rx_length);
-                    uart_write_bytes(uart_port, "\r\n", 2);
+
+                    // [CHANGE] Write to USB JTAG directly
+                    // This replaces uart_write_bytes(uart_port, ...);
+                    if (g_rx_length > 0) {
+                        usb_serial_jtag_write_bytes((const void *)g_rx_buffer, g_rx_length, pdMS_TO_TICKS(100));
+                        
+                        // Optional: Send a newline if you are strictly using a text terminal
+                        // usb_serial_jtag_write_bytes("\r\n", 2, pdMS_TO_TICKS(100));
+                    }
                     
                 } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
                     ESP_LOGW(TAG, "RX CRC error");
@@ -580,7 +606,10 @@ extern "C" void app_main()
     // Initialize peripherals
     gpio_setup();
     spi_setup();
-    uart_init();
+    // [UPDATE] inside app_main
+
+    // uart_init();  <-- Remove this
+    usb_cdc_init(); // <-- Add this
     radio_init();
 
     // Start RX mode
