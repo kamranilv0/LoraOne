@@ -59,7 +59,7 @@
 
 // Power Configuration
 // #define LORA_TX_POWER 21             // dBm (Module supports 30dBm, limited to 21 for lab)
-#define LORA_TX_POWER 0             // dBm (Module supports 30dBm, limited to 21 for lab)
+#define LORA_TX_POWER 22             // dBm (Module supports 30dBm, limited to 21 for lab)
 
 
 // Preamble and Payload

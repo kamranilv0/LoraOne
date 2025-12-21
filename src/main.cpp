@@ -87,7 +87,6 @@ static void IRAM_ATTR setFlag_RxDone();
 static void IRAM_ATTR setFlag_TxDone();
 static void serial_rx_task(void *pvParameters);
 static void radio_rx_task(void *pvParameters);
-static void write_lna_boost_register();
 
 // ============================================================================
 // LOGGING & DEBUG UTILITIES
@@ -174,9 +173,9 @@ static void gpio_setup()
     // RadioLib will manage this via setRfSwitchPins
     gpio_config_t rxen_config = {
         .pin_bit_mask = (1ULL << L_RXEN),
-        .mode = GPIO_MODE_OUTPUT,
+        .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,  // ← KRİTİK
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&rxen_config);
@@ -260,60 +259,6 @@ static void usb_cdc_init()
     ESP_LOGI(TAG, "USB CDC initialized");
 }
 
-// ============================================================================
-// LNA BOOST REGISTER WRITE (Direct SPI Access)
-// ============================================================================
-
-static void write_lna_boost_register()
-{
-    // SX1262 command: WriteRegister (0x0D)
-    // Register address: 0x08AC (LNA boost)
-    // Value: 0x96 (enable boost)
-    
-    uint8_t cmd_buffer[5] = {
-        0x0D,           // WriteRegister command
-        0x08, 0xAC,     // Register address (0x08AC)
-        0x96,           // Value to write
-    };
-
-    // Wait for radio to be ready (BUSY pin low)
-    uint32_t timeout = 1000;
-    while (gpio_get_level((gpio_num_t)L_BUSY) && timeout--) {
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    if (timeout == 0) {
-        ESP_LOGE(TAG, "Timeout waiting for BUSY pin before LNA boost write");
-        return;
-    }
-
-    // Perform SPI transaction
-    gpio_set_level((gpio_num_t)L_NSS, 0);  // CS low
-    delay_us(10);
-
-    spi_transaction_t trans = {
-        .length = 32,  // 4 bytes * 8 bits
-        .tx_buffer = cmd_buffer,
-        .rx_buffer = NULL,
-    };
-
-    esp_err_t ret = spi_device_transmit(g_spi_handle, &trans);
-    
-    delay_us(10);
-    gpio_set_level((gpio_num_t)L_NSS, 1);  // CS high
-
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "LNA boost enabled (register 0x08AC = 0x96)");
-    } else {
-        ESP_LOGE(TAG, "Failed to write LNA boost register: %s", esp_err_to_name(ret));
-    }
-
-    // Wait for operation to complete
-    timeout = 1000;
-    while (gpio_get_level((gpio_num_t)L_BUSY) && timeout--) {
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
 
 // ============================================================================
 // RADIO INITIALIZATION WITH RADIOLIB
@@ -372,7 +317,7 @@ static void radio_init()
     }
 
     // Configure RF switch pins: L_RXEN for RX path control (GPIO 13)
-    g_radio->setRfSwitchPins(L_RXEN, RADIOLIB_NC);
+    // g_radio->setRfSwitchPins(L_RXEN, RADIOLIB_NC);
     ESP_LOGI(TAG, "RF switch pins configured: RX_EN on GPIO %d", L_RXEN);
 
     // CRITICAL: Set explicit header mode to match Arduino code
@@ -388,9 +333,6 @@ static void radio_init()
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGW(TAG, "Failed to set sync word, code: %d", state);
     }
-
-    // Enable LNA boost for improved RX sensitivity via direct SPI
-    write_lna_boost_register();
 
     // Set DIO1 interrupt action callbacks
     g_radio->setDio1Action(setFlag_RxDone);
