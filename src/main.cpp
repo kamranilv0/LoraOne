@@ -353,6 +353,8 @@ static void radio_init()
         TCXO_VOLTAGE,             // TCXO voltage (0.0 = no TCXO)
         LORA_USE_DCDC             // Use DC-DC regulator    
     );
+    
+    g_radio->setRxBoostedGainMode(true);
 
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "Radio initialization failed, code: %d", state);
