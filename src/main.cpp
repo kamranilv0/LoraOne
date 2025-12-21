@@ -319,6 +319,7 @@ static void write_lna_boost_register()
 // RADIO INITIALIZATION WITH RADIOLIB
 // ============================================================================
 
+// Initialize RadioLib SX1262 with proper configuration
 static void radio_init()
 {
     ESP_LOGI(TAG, "Initializing SX1262 radio module with RadioLib...");
@@ -339,15 +340,18 @@ static void radio_init()
     // Begin initialization
     ESP_LOGI(TAG, "Configuring SX1262...");
     
+    // IMPORTANT: Match Arduino code - use 7 parameters (no TCXO)
+    // E22-900M-30S doesn't have TCXO, so don't pass TCXO voltage
     int16_t state = g_radio->begin(
         LORA_FREQUENCY,           // Frequency in MHz
         LORA_BANDWIDTH,           // Bandwidth in kHz
         LORA_SPREADING_FACTOR,    // Spreading factor
         LORA_CODING_RATE,         // Coding rate
-        LORA_SYNC_WORD,           // Sync word (0x12 = private, 0x34 = public)
+        LORA_SYNC_WORD,           // Sync word (0x34 = public)
         LORA_TX_POWER,            // Output power in dBm
         LORA_PREAMBLE_LENGTH,     // Preamble length
-        TCXO_VOLTAGE              // TCXO voltage (0 = no TCXO)
+        TCXO_VOLTAGE,             // TCXO voltage (0.0 = no TCXO)
+        LORA_USE_DCDC             // Use DC-DC regulator    
     );
 
     if (state != RADIOLIB_ERR_NONE) {
@@ -366,9 +370,22 @@ static void radio_init()
     }
 
     // Configure RF switch pins: L_RXEN for RX path control (GPIO 13)
-    // setRfSwitchPins(rxPin, txPin) - txPin unused (DIO2 handles TX), rxPin = L_RXEN
     g_radio->setRfSwitchPins(L_RXEN, RADIOLIB_NC);
     ESP_LOGI(TAG, "RF switch pins configured: RX_EN on GPIO %d", L_RXEN);
+
+    // CRITICAL: Set explicit header mode to match Arduino code
+    state = g_radio->explicitHeader();
+    if (state != RADIOLIB_ERR_NONE) {
+        ESP_LOGW(TAG, "Failed to set explicit header, code: %d", state);
+    } else {
+        ESP_LOGI(TAG, "Explicit header mode enabled");
+    }
+
+    // Set sync word again after begin (for safety)
+    state = g_radio->setSyncWord(LORA_SYNC_WORD);
+    if (state != RADIOLIB_ERR_NONE) {
+        ESP_LOGW(TAG, "Failed to set sync word, code: %d", state);
+    }
 
     // Enable LNA boost for improved RX sensitivity via direct SPI
     write_lna_boost_register();
@@ -376,7 +393,7 @@ static void radio_init()
     // Set DIO1 interrupt action callbacks
     g_radio->setDio1Action(setFlag_RxDone);
 
-    // Configure CRC
+    // Configure CRC (optional - RadioLib defaults to enabled)
     state = g_radio->setCRC(true);
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGW(TAG, "Failed to enable CRC, code: %d", state);
@@ -390,6 +407,7 @@ static void radio_init()
     ESP_LOGI(TAG, "  TX Power: %d dBm", LORA_TX_POWER);
     ESP_LOGI(TAG, "  Sync Word: 0x%02X", LORA_SYNC_WORD);
     ESP_LOGI(TAG, "  Preamble: %d symbols", LORA_PREAMBLE_LENGTH);
+    ESP_LOGI(TAG, "  Header Mode: EXPLICIT");
     ESP_LOGI(TAG, "  DIO2 RF Switch: ENABLED (TX)");
     ESP_LOGI(TAG, "  RF Switch Control: ENABLED (RX via GPIO %d)", L_RXEN);
     ESP_LOGI(TAG, "  LNA Boost: ENABLED");
@@ -525,7 +543,6 @@ static void serial_rx_task(void *pvParameters)
 
 static void radio_rx_task(void *pvParameters)
 {
-    
     while (1) {
         // Wait for DIO1 interrupt indicating RX data available
         if (g_rx_data_available) {
@@ -533,31 +550,27 @@ static void radio_rx_task(void *pvParameters)
 
             if (xSemaphoreTake(g_radio_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 // Read received data from radio
+                // CRITICAL FIX: readData returns error code, NOT length!
                 int16_t state = g_radio->readData(g_rx_buffer, LORA_RX_PAYLOAD_SIZE);
                 
-                if (state >= 0) {
-                    // state contains the number of bytes received
-                    g_rx_length = state;
+                // Check if read was successful (RADIOLIB_ERR_NONE = 0)
+                if (state == RADIOLIB_ERR_NONE) {
+                    // Get the ACTUAL packet length using getPacketLength()
+                    g_rx_length = g_radio->getPacketLength();
                     
                     // Get RSSI and SNR
                     float rssi = g_radio->getRSSI();
                     float snr = g_radio->getSNR();
                     
-                    // [UPDATE] Inside radio_rx_task loop
-
-                    // ... inside if (state >= 0) block ...
-
                     ESP_LOGI(TAG, "LoRa RX: %zu bytes | RSSI: %.1f dBm | SNR: %.1f dB", 
                                 g_rx_length, rssi, snr);
                     log_hex_dump(g_rx_buffer, g_rx_length, "RX Data");
 
-                    // [CHANGE] Write to USB JTAG directly
-                    // This replaces uart_write_bytes(uart_port, ...);
+                    // Write to USB JTAG
                     if (g_rx_length > 0) {
                         usb_serial_jtag_write_bytes((const void *)g_rx_buffer, g_rx_length, pdMS_TO_TICKS(100));
-                        
-                        // Optional: Send a newline if you are strictly using a text terminal
-                        // usb_serial_jtag_write_bytes("\r\n", 2, pdMS_TO_TICKS(100));
+                        // Optional newline for terminal readability
+                        usb_serial_jtag_write_bytes("\r\n", 2, pdMS_TO_TICKS(100));
                     }
                     
                 } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {

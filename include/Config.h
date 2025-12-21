@@ -50,11 +50,11 @@
    ========================================================================= */
 
 // Frequency Configuration
-#define LORA_FREQUENCY 869.5f        // MHz - ISM Band 868-870 MHz (Europe)
+#define LORA_FREQUENCY 869.525f        // MHz - ISM Band 868-870 MHz (Europe)
 
 // Modulation Parameters
 #define LORA_BANDWIDTH 250.0f        // kHz
-#define LORA_SPREADING_FACTOR 7      // SF7: Balance between range and data rate
+#define LORA_SPREADING_FACTOR 8      // SF7: Balance between range and data rate
 #define LORA_CODING_RATE 5           // CR 4/5
 
 // Power Configuration
@@ -63,9 +63,10 @@
 
 
 // Preamble and Payload
-#define LORA_PREAMBLE_LENGTH 12      // Standard LoRa preamble length
+#define LORA_PREAMBLE_LENGTH 8      // Standard LoRa preamble length
 #define LORA_PAYLOAD_LENGTH 255      // Maximum payload
 
+#define LORA_USE_DCDC true          // Use DC-DC regulator for power efficiency
 // CRC and Header
 #define LORA_CRC_ENABLED true
 #define LORA_EXPLICIT_HEADER true
