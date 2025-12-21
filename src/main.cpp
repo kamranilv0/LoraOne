@@ -173,9 +173,9 @@ static void gpio_setup()
     // RadioLib will manage this via setRfSwitchPins
     gpio_config_t rxen_config = {
         .pin_bit_mask = (1ULL << L_RXEN),
-        .mode = GPIO_MODE_INPUT,
+        .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,  // ← KRİTİK
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&rxen_config);
@@ -317,7 +317,7 @@ static void radio_init()
     }
 
     // Configure RF switch pins: L_RXEN for RX path control (GPIO 13)
-    // g_radio->setRfSwitchPins(L_RXEN, RADIOLIB_NC);
+    g_radio->setRfSwitchPins(L_RXEN, RADIOLIB_NC);
     ESP_LOGI(TAG, "RF switch pins configured: RX_EN on GPIO %d", L_RXEN);
 
     // CRITICAL: Set explicit header mode to match Arduino code
