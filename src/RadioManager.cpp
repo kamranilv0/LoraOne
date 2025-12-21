@@ -88,7 +88,7 @@ void radio_init()
     
     // Create radio instance
     g_radio = new SX1262(g_mod);
-
+    
     // Hardware reset
     g_radio->reset();
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -109,6 +109,7 @@ void radio_init()
     );
     
     g_radio->setRxBoostedGainMode(true);
+    g_radio->setCurrentLimit(140.0);
 
     if (state != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "Radio initialization failed, code: %d", state);

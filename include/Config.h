@@ -27,7 +27,7 @@
 #define L_BUSY 15  // LoRa Busy Signal (must check before SPI ops)
 #define L_DIO1 14  // Interrupt Pin: TxDone, RxDone, Timeout
 
-#define TCXO_VOLTAGE 2.2f  // TCXO Voltage (if applicable)
+#define TCXO_VOLTAGE 1.8f  // TCXO Voltage (if applicable)
 
 /* =========================================================================
    RF SWITCH CONTROL PINS - CRITICAL FOR SAFETY
