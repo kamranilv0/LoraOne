@@ -94,6 +94,9 @@
 #define UART_RX_PIN 44               // ESP32-S3 UART0 RX
 // Note: Use UART_NUM_0 enum in code, not 0 directly
 
+#define USB_TX_BUFFER_SIZE 4096   // USB Serial TX buffer size
+#define USB_RX_BUFFER_SIZE 4096   // USB Serial RX buffer size
+
 /* =========================================================================
    TIMING CONSTANTS
    ========================================================================= */
